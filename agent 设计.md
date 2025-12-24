@@ -109,3 +109,78 @@ flowchart TD
     OBS -- 数据汇聚至 --> CW[(CloudWatch)]
 
 ```
+| Agent 角色 | 核心使命 | 关键功能 | 必备工具技能 | 必备知识数据 |
+|-----------|----------|----------|---------------|---------------|
+| **哨兵 (Sentinel Agent)** | 持续感知与异常发现 | 1. **指标查询**：从监控系统拉取关键指标与日志。<br>2. **异常检测**：应用阈值、基线算法判断是否触发告警规则。<br>3. **事件上报**：创建初步事件单，包含上下文信息并传递给“侦探”。 | 监控平台API（Prometheus, Datadog）、日志查询工具（ELK, Loki）、时序数据库查询语言。 | 系统基线指标（CPU/内存/磁盘正常范围）、业务SLO/SLI定义、告警抑制规则。 |
+| **侦探 (Investigator Agent)** | 根因分析与影响评估 | 1. **数据关联**：聚合指标、日志、链路追踪数据，构建事件全景图。<br>2. **推理定位**：运用思维链进行假设生成与验证，定位故障根本原因。<br>3. **报告生成**：输出根因分析报告，明确影响范围与严重等级。 | 分布式追踪工具（Jaeger, Zipkin）、日志关联分析工具、服务依赖图谱查询接口。 | 系统架构图、历史故障模式知识库、服务关键性分级、常见故障排查路径。 |
+| **外科医生 (Surgeon Agent)** | 执行标准化补救操作 | 1. **方案确认**：验证“侦探”的根因分析，确认符合执行条件。<br>2. **执行预案**：执行预定义的修复操作（重启、扩容、流量切换、回滚）。<br>3. **效果验证**：检查修复后指标是否恢复正常，记录操作日志。 | K8s/云平台CLI与API、配置管理工具（Ansible, Terraform）、服务治理接口。 | 标准操作程序（SOP）库、应急预案手册（Runbook）、变更审批流程、回滚检查点。 |
+| **分析师 (Analyst Agent)** | 容量、性能与风险洞察 | 1. **趋势分析**：分析资源使用率、性能指标与成本数据的长期趋势。<br>2. **预测预警**：基于模型预测容量瓶颈与性能风险。<br>3. **优化建议**：给出架构优化、配置调优、资源调整等建议。 | 时序数据分析工具、性能剖析工具（pprof, FlameGraph）、成本管理平台API。 | 性能基线数据、容量规划模型、资源成本明细、架构演进路线图。 |
+| **协调员 (Coordinator Agent)** | 自动化协作、知识沉淀与流程衔接 | 1. **通信协调**：自动生成并发送事件状态更新邮件/Slack消息给相关团队。<br>2. **文档生成**：基于“侦探”的分析报告和“外科医生”的操作日志，自动生成符合模板的事后分析报告初稿。<br>3. **任务管理**：将“分析师”的建议自动创建为工单，分配给负责人并跟踪进度。<br>4. **知识入库**：将处理完毕的事件、报告、新发现的模式结构化存储到知识库。 | 办公软件API（Google Workspace, Office 365）、协作工具API（Slack, Teams）、工单系统API（Jira, ServiceNow）、Wiki API（Confluence, Notion）。 | 团队通讯录、升级策略、报告模板、SLO定义文档、知识库分类结构。 |
+
+
+```mermaid
+flowchart TD
+    subgraph 外部触发源
+        A1[监控告警]
+        A2[定时任务]
+        A3[Langflow API]
+    end
+
+    subgraph 编排与队列层_AWS_Managed
+        B[“AWS Step Functions<br>状态机协调器”]
+        C[“Amazon SQS<br>任务队列”]
+    end
+
+    subgraph 执行层_EKS_Cluster
+        D[EKS Cluster]
+        D --> E[“Agent Pods<br>（5个Deployment）”]
+        
+        E --> F1[哨兵 Sentinel]
+        E --> F2[侦探 Investigator]
+        E --> F3[外科医生 Surgeon]
+        E --> F4[分析师 Analyst]
+        E --> F5[协调员 Clerk]
+    end
+
+    subgraph 支撑服务
+        G[AWS IAM]
+        H[“Secrets Manager/<br>Parameter Store”]
+    end
+
+    subgraph 数据与知识层
+        I[“Amazon RDS/<br>OpenSearch”]
+        J[Amazon S3]
+    end
+
+    A1 & A2 & A3 --> B
+    B -- 派发任务 --> C
+    C -- 拉取任务 --> E
+
+    G -- 最小权限 --> E
+    H -- 获取配置/密钥 --> E
+
+    F1 & F2 & F3 & F4 & F5 -- 读写数据 --> I & J
+```
+```mermaid
+sequenceDiagram
+    participant Client as 客户端/调用方
+    participant API as Langflow API
+    participant SQS as Amazon SQS (队列)
+    participant Worker as 异步工作流处理进程
+    participant Data as 数据层 (RDS/S3)
+
+    Client->>API: 1. 提交任务请求
+    API->>SQS: 2. 快速写入任务消息
+    SQS-->>API: 写入成功
+    API-->>Client: 3. 返回“已接收”(202 Accepted)
+
+    Note over Worker: 4. 独立消费进程<br>持续轮询SQS
+    Worker->>SQS: 5. 拉取任务消息
+    SQS->>Worker: 6. 返回消息
+
+    Note over Worker: 7. 执行核心Langflow工作流
+    Worker->>Data: 8. 读写所需数据
+    Data-->>Worker: 返回数据
+    Worker->>Data: 9. 最终结果存入数据库(S3/RDS)
+    Worker->>Client: 10. (可选) 通过Webhook回调通知
+```
