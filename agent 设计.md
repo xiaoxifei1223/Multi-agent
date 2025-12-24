@@ -184,3 +184,49 @@ sequenceDiagram
     Worker->>Data: 9. 最终结果存入数据库(S3/RDS)
     Worker->>Client: 10. (可选) 通过Webhook回调通知
 ```
+
+```mermaid
+flowchart TD
+    subgraph A[编排与开发层 Langflow]
+        direction LR
+        LF_UI[Langflow UI<br>可视化编排画布]
+        LF_Backend[Langflow Backend<br>编译/运行引擎]
+    end
+
+    subgraph B[运行层 Amazon EKS]
+        direction TB
+        Pod_Sentinel[哨兵Agent Pod]
+        Pod_Investigator[侦探Agent Pod]
+        Pod_Surgeon[外科医生Agent Pod]
+    end
+
+    subgraph C[智能层 Amazon Bedrock]
+        Claude(Claude 3模型)
+    end
+
+    subgraph D[记忆与知识层]
+        DDB[(DynamoDB<br>事件状态/短期记忆)]
+        OS[(OpenSearch<br>日志/知识/向量检索)]
+        S3[(S3<br>原始日志/报告归档)]
+    end
+
+    subgraph E[基础设施与事件]
+        CW[CloudWatch<br>监控告警]
+        EB[EventBridge<br>全局事件总线]
+    end
+
+    %% 核心流程
+    CW -- 1. 发布告警事件 --> EB
+    EB -- 2. 路由事件 --> B
+    
+    A -- 3. 部署Agent定义 --> B
+    
+    B -- 4. 查询/更新状态与知识 --> D
+    B -- 5. 调用模型进行决策 --> C
+    C -- 6a. 返回决策 --> B
+    B -- 6b. 需要执行动作 --> Ext[外部工具/API<br>K8s, Slack, 等]
+    
+    %% Langflow内部逻辑
+    LF_UI -- 可视化设计Agent逻辑 --> LF_Backend
+    LF_Backend -- 生成可执行Agent配置 --> B
+```
